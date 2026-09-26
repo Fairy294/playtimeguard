@@ -10,8 +10,8 @@ public final class GuardConfig {
     private static final ModConfigSpec.Builder BUILDER = new ModConfigSpec.Builder();
 
     public static final ModConfigSpec.ConfigValue<List<? extends String>> EXEMPT_PLAYERS = BUILDER
-            .comment("完全不受禁玩日、时长和 BossBar 限制的玩家名列表，不区分大小写。")
-            .defineListAllowEmpty("exemptPlayers", List.of("CMC4624"), () -> "", value -> value instanceof String);
+            .comment("完全不受禁玩日、时长和 BossBar 限制的玩家名列表，不区分大小写；默认为空，即所有人都受限。")
+            .defineListAllowEmpty("exemptPlayers", List.of(), () -> "", value -> value instanceof String);
     public static final ModConfigSpec.ConfigValue<List<? extends String>> BLOCKED_DAYS = BUILDER
             .comment("禁止游玩的星期列表，使用 MONDAY 到 SUNDAY；空列表表示不禁止。")
             .defineListAllowEmpty("blockedDays", List.of("MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY"),

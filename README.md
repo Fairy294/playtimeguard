@@ -29,7 +29,8 @@ Minecraft **NeoForge 26.1.2** 服务端的防沉迷模组。按星期限制进�
 ```toml
 [general]
     # 完全不受禁玩日、时长和 BossBar 限制的玩家名列表，不区分大小写。
-    exemptPlayers = ["CMC4624"]
+    # 默认为空 —— 所有人都受限。把你的管理员填进来（如 ["Steve", "Alex"]）。
+    exemptPlayers = []
 
     # 禁止游玩的星期列表，使用 MONDAY 到 SUNDAY；空列表表示不禁止。
     blockedDays = ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY"]
