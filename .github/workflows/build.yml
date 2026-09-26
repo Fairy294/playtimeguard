@@ -9,7 +9,9 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  # 构建本身只需要读权限；创建 Release 需要写权限（上传 jar 到 Release）。
+  # 工作流只跑本仓库自己的代码，因此这里直接给 write，避免多拆一个 job 再传产物。
+  contents: write
 
 jobs:
   build:
