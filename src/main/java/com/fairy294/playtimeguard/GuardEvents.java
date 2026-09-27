@@ -2,8 +2,10 @@ package com.fairy294.playtimeguard;
 
 import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -36,7 +38,10 @@ public final class GuardEvents {
     @SubscribeEvent
     public void onPlayerLogin(PlayerLoggedInEvent event) {
         if (event.getEntity() instanceof ServerPlayer player) {
-            admit(player);
+            String reason = admit(player);
+            if (reason != null) {
+                kick(player, reason);
+            }
         }
     }
 
@@ -61,8 +66,18 @@ public final class GuardEvents {
         if (tickCount % 20 != 0) {
             return;
         }
+
+        // 关键：必须遍历玩家列表的「快照」。
+        // getPlayers() 返回的是服务端活集合的不可修改视图，循环里踢人会把元素从底层列表摘掉，
+        // 直接遍历会抛 ConcurrentModificationException，进而让整个 tick 循环崩溃、服务器被看门狗强杀。
+        // 这里先复制一份再遍历，并且把所有踢人动作推迟到循环结束后统一执行，
+        // 避免在遍历过程中触发登出事件造成重入。
+        List<ServerPlayer> online = List.copyOf(event.getServer().getPlayerList().getPlayers());
+        List<ServerPlayer> pendingKick = new ArrayList<>();
+        List<String> pendingKickReason = new ArrayList<>();
+
         // 一秒执行一次时长结算、提醒和 BossBar 更新；实际时长由经过的 tick 数计算。
-        for (ServerPlayer player : event.getServer().getPlayerList().getPlayers()) {
+        for (ServerPlayer player : online) {
             UUID id = player.getUUID();
             if (disconnecting.contains(id)) {
                 continue;
@@ -74,20 +89,26 @@ public final class GuardEvents {
             }
             Session session = sessions.get(id);
             if (session == null) {
-                admit(player);
+                String reason = admit(player);
+                if (reason != null) {
+                    pendingKick.add(player);
+                    pendingKickReason.add(reason);
+                }
                 continue;
             }
             long previousUsed = tracker.usedMillis(id);
             tracker.addTicks(id, tickCount - session.lastTick);
             session.lastTick = tickCount;
             if (GuardConfig.isBlocked(PlaytimeTracker.currentDate().getDayOfWeek())) {
-                kick(player, GuardConfig.KICK_BLOCKED_DAY_MESSAGE.get());
+                pendingKick.add(player);
+                pendingKickReason.add(GuardConfig.KICK_BLOCKED_DAY_MESSAGE.get());
                 continue;
             }
             long limit = limitMillis();
             long remaining = Math.max(0, limit - tracker.usedMillis(id));
             if (remaining == 0) {
-                kick(player, GuardConfig.KICK_TIME_UP_MESSAGE.get());
+                pendingKick.add(player);
+                pendingKickReason.add(GuardConfig.KICK_TIME_UP_MESSAGE.get());
                 continue;
             }
             long warning = GuardConfig.WARN_BEFORE_MINUTES.get() * 60_000L;
@@ -97,6 +118,12 @@ public final class GuardEvents {
             }
             updateBossBar(player, remaining);
         }
+
+        // 遍历结束后再踢人，此时没有任何迭代器还引用玩家列表。
+        for (int i = 0; i < pendingKick.size(); i++) {
+            kick(pendingKick.get(i), pendingKickReason.get(i));
+        }
+
         // 每分钟额外落盘一次，服务器意外退出时最多损失少量游玩记录。
         if (tickCount % 1200 == 0) {
             tracker.save();
@@ -106,7 +133,8 @@ public final class GuardEvents {
     @SubscribeEvent
     public void onServerStopping(ServerStoppingEvent event) {
         // 停服时结算所有仍在线的玩家，写入世界目录。
-        for (Map.Entry<UUID, Session> item : sessions.entrySet()) {
+        // 同样先取快照，避免在遍历中因任何回调修改 sessions 而抛并发修改异常。
+        for (Map.Entry<UUID, Session> item : Map.copyOf(sessions).entrySet()) {
             if (!disconnecting.contains(item.getKey()) && !isExempt(item.getValue().player)) {
                 tracker.addTicks(item.getKey(), tickCount - item.getValue().lastTick);
             }
@@ -117,22 +145,26 @@ public final class GuardEvents {
         bossBars.clear();
     }
 
-    private void admit(ServerPlayer player) {
+    /**
+     * 尝试接纳一个玩家进入计时。
+     *
+     * @return null 表示正常放行；非 null 表示需要踢出，返回值是踢出消息模板。
+     */
+    private String admit(ServerPlayer player) {
         UUID id = player.getUUID();
         if (isExempt(player)) {
-            return;
+            return null;
         }
         if (GuardConfig.isBlocked(PlaytimeTracker.currentDate().getDayOfWeek())) {
-            kick(player, GuardConfig.KICK_BLOCKED_DAY_MESSAGE.get());
-            return;
+            return GuardConfig.KICK_BLOCKED_DAY_MESSAGE.get();
         }
         long remaining = Math.max(0, limitMillis() - tracker.usedMillis(id));
         if (remaining == 0) {
-            kick(player, GuardConfig.KICK_TIME_UP_MESSAGE.get());
-            return;
+            return GuardConfig.KICK_TIME_UP_MESSAGE.get();
         }
         sessions.put(id, new Session(player, tickCount));
         updateBossBar(player, remaining);
+        return null;
     }
 
     private void updateBossBar(ServerPlayer player, long remaining) {
